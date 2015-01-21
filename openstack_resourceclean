@@ -1,0 +1,271 @@
+#!/usr/bin/python
+#
+# Copyright (C) 2015  Maplelabs
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+import sys, json, os, requests
+import configparser, exceptions
+from datetime import datetime
+
+# List of tenants which sould NOT be deleted. (please DO NOT delete anything from list)
+permTenantList = ["services", "service"]
+
+#List of users whcih should NOT be deleted. (please DO NOT delete anything from list)
+permUserList = ["admin", "ceilometer", "cinder", "glance", "heat", "neutron", "nova", "swift", "demo", "heat_domain_admin"]
+unAuth = 401
+
+# script used for cleanup
+cleanscript = "ospurge"
+
+class resourceCleanUp:
+	
+	def __init__(self, hostIp, protocol):
+		self.hostIp = hostIp
+		self.protocol = protocol
+		self.deleteResourceList = []
+		self.userIdList = []
+		self.headerWithAuth = {}
+		self.userList = []
+		self.tenantList = []
+		self.logFileObj = ""
+	
+	def writeLog(self, logMessage, fileObj):
+		fileObj.write(logMessage)
+
+	def getConfigData(self):
+		try:
+			config = configparser.ConfigParser()
+			if os.path.exists(os.getenv("CONF_FILE")):
+				config.read(os.getenv("CONF_FILE"))
+			else:
+				message = "Config file not found "+os.getenv("CONF_FILE")
+				self.writeLog(message+"\n", sys.stdout)
+				self.writeLog(message, self.logFileObj)
+				exit()
+			self.userList = [i.replace(' ', '') for i in config.get('user', 'userList').split(',')]
+			self.tenantList = [i.replace(' ', '') for i in config.get('tenant', 'tenantList').split(',')]	
+		except exceptions.Exception as e:
+			message = "Unable to parse config file"
+			self.writeLog(message, sys.stdout)
+			self.writeLog(message, self.logFileObj)
+			exit()
+	
+	def getAuthToken(self, userName=None, password=None, tenantName=None, authPort=None):
+		postData = '{"auth": {"tenantName": "%s", "passwordCredentials": {"username": "%s", "password": "%s"}}}' % (tenantName, userName, password)	
+		url = "%s://%s:%s/v2.0/tokens" % (self.protocol, self.hostIp, authPort)
+		headers = {'Content-Type': 'application/json', 'Accept': 'application/json', 'User-Agent': 'python-neutronclient'} 
+		try:
+			resp = requests.post(url, data = postData, headers = headers, timeout = 10.0)
+			if resp.status_code == requests.codes.ok:
+				self.writeLog(str(datetime.now())[:19]+":INFO:"+resp.text+"\n", self.logFileObj)
+				return json.loads(resp.text)["access"]["token"]["id"]
+			if resp.status_code == unAuth:
+				self.writeLog("Unauthorized Access\n", sys.stdout)
+				exit()
+		except exceptions.Exception as e:
+			self.writeLog("Unable To Reach Host "+ self.hostIp +"\n", sys.stdout)
+			self.writeLog(str(datetime.now())[:19]+":INFO:Unable To Reach Host "+ self.hostIp +"\n", self.logFileObj)
+			exit()
+	
+	def getResource(self, resourceType=None, authToken=None, port=None):
+		url = "%s://%s:%s/v2.0/%s" % (self.protocol, self.hostIp, port, resourceType)	
+		self.headerWithAuth = {"User-Agent": "python-keystoneclient", "X-Auth-Token": authToken}
+		try:
+			res = requests.get(url, headers = self.headerWithAuth)
+			self.writeLog(res.text+"\n", self.logFileObj)
+		except:
+			message = "Unable to reach host (Time out)\n"
+			self.writeLog(message, sys.stdout)
+			self.writeLog(message, self.logFileObj)
+			exit()
+
+		resDict = json.loads(res.text)
+		
+		if os.getenv("CLEAN_ALL") == "yes":
+			self.tenantList = permTenantList
+			self.userList = permUserList
+		for i in range(0, len(resDict[resourceType])):
+			resourceName = resDict[resourceType][i]["name"]
+			if resourceType == "tenants" and resourceName not in self.tenantList and resourceName not in permTenantList:
+				self.deleteResourceList.append(resourceName)
+			elif resourceType == "users" and resourceName not in self.userList and resourceName not in permUserList:
+				self.deleteResourceList.append(resourceName)
+				self.userIdList.append(resDict[resourceType][i]["id"])
+
+	def deleteUser(self, userId=None, authToken=None, port=None):
+		
+		url = "%s://%s:%s/v2.0/users/%s" % (self.protocol, self.hostIp, port, userId)
+		try:
+			res = requests.delete(url, headers = self.headerWithAuth)
+			self.writeLog(str(datetime.now())[:19]+":INFO:"+res.text+"\n", self.logFileObj)
+		except:
+			self.writeLog("Unable to delete User", sys.stdout)
+			self.writeLog("Unable to delete User\n", self.logFileObj)
+			exit()
+		return 0	
+	def __del__(self):
+		pass
+
+def getCommand(deleteResource):
+	
+	command = ""
+	logFile = os.getenv("LOG_FILE")
+
+	if os.getenv("VERBOSE") == "yes" and deleteResource not in permTenantList:
+		if deleteResource == "demo" or deleteResource == "admin":
+			command = "%s %s --dont-delete-project --cleanup-project %s 2>&1 |tee -a %s" % (cleanscript, "--verbose", deleteResource, logFile)
+		else:
+			command = "%s %s --cleanup-project %s 2>&1 |tee -a %s" % (cleanscript, "--verbose", deleteResource, logFile)
+			
+	elif deleteResource not in permTenantList:
+		if deleteResource == "demo" or deleteResource == "admin":
+			command = "%s %s --dont-delete-project --cleanup-project %s >> %s 2>&1" % (cleanscript, "--verbose", deleteResource, logFile)
+		else:
+			command = "%s %s --cleanup-project %s >> %s 2>&1" % (cleanscript, "--verbose", deleteResource, logFile)
+		
+	return command	
+
+def cleanUp(hostIp=None, protocol=None, userName=None, password=None, tenantName=None):
+	
+	keystonePort = "35357"
+	authPort = "5000"
+
+	cleanupObject = resourceCleanUp(hostIp, protocol)
+	cleanupObject.logFileObj = open(os.getenv("LOG_FILE"), "a+")
+	cleanupObject.getConfigData()
+	authToken = cleanupObject.getAuthToken(userName, password, tenantName, authPort)
+	cleanupObject.getResource("tenants", authToken, keystonePort)
+	cleanupObject.logFileObj.close()
+	for i in range(0, len(cleanupObject.deleteResourceList)):
+		if cleanupObject.deleteResourceList[i] != "admin" and cleanupObject.deleteResourceList[i] not in permTenantList:
+			command = getCommand(cleanupObject.deleteResourceList[i])
+			if not os.system(command):
+				message = "Deleted resource of tenant : %s\n" % (cleanupObject.deleteResourceList[i] )
+				fileObj = open(os.getenv("LOG_FILE"), "a+")
+				cleanupObject.writeLog(str(datetime.now())[:19]+":INFO:"+message+"\n", fileObj)
+				fileObj.close()
+				cleanupObject.writeLog(message, sys.stdout)
+			else:
+				message = "Unable to delete the resources of "
+				fileObj = open(os.getenv("LOG_FILE"), "a+")
+				cleanupObject.writeLog(message + cleanupObject.deleteResourceList[i], sys.stdout)
+				cleanupObject.writeLog(str(datetime.now())[:19]+":ERROR:"+message + cleanupObject.deleteResourceList[i], fileObj)
+				fileObj.close()
+	
+	cleanupObject.deleteResourceList = []	
+	cleanupObject.logFileObj = open(os.getenv("LOG_FILE"), "a+")
+	authToken = cleanupObject.getAuthToken(userName, password, tenantName, authPort)
+	cleanupObject.getResource("users", authToken, keystonePort)
+	for i in range(0, len(cleanupObject.deleteResourceList)):
+		if cleanupObject.deleteResourceList[i] not in permUserList and cleanupObject.deleteResourceList[i] != "demo" and cleanupObject.deleteResourceList[i] != "admin":
+			if not cleanupObject.deleteUser(cleanupObject.userIdList[i], authToken, keystonePort):
+				message = "Deleted user : %s\n" % (cleanupObject.deleteResourceList[i] )
+				cleanupObject.writeLog(str(datetime.now())[:19]+":INFO:"+message+"\n", cleanupObject.logFileObj)
+				cleanupObject.writeLog(message, sys.stdout)
+			else:
+				message = "Unable to delete the user :"
+				cleanupObject.writeLogtr(message+"\n" + cleanupObject.deleteResourceList[i], sys.stdout)
+				cleanupObject.writeLog(str(datetime.now())[:19]+":ERROR:"+message+"\n"+cleanupObject.deleteResourceList[i], cleanupObject.logFileObj)
+				
+	cleanupObject.logFileObj.close()
+	if os.getenv("KEEP_ADMIN") == "no":
+		adminTenant = "admin"
+		command = getCommand(adminTenant)
+		if not os.system(command):
+			message = "Deleted resource of tenant : %s\n" % (adminTenant )
+			fileObj = open(os.getenv("LOG_FILE"), "a+")
+			cleanupObject.writeLog(str(datetime.now())[:19]+":INFO:"+message+"\n", fileObj)
+			fileObj.close()
+			cleanupObject.writeLog(message, sys.stdout)
+		else:
+			message = "Unable to delete the resources of "
+			fileObj = open(os.getenv("LOG_FILE"), "a+")
+			cleanupObject.writeLog(message + adminTenant, sys.stdout)
+			cleanupObject.writeLog(str(datetime.now())[:19]+":ERROR:"+essage + adminTenant, fileObj)
+			fileObj.close()
+			
+
+def main():
+	
+	if len(sys.argv) < 5:
+		print "USAGE: %s <HOST_IP> <USER_NAME> <PASSWORD> <TENANT_NAME> <OPTIONAL_ARGUMENTS>" % (__file__)
+		print "Optional arguments :"
+		print  "\t--cleanall    [clean all the resources except service tenant related resources]\n\t--verbose     [print verbose output]\n\t--keep-admin  [Do not clean resources of admin tenant]\n\t--config-file [provide config file path after this argument]"
+		
+		exit()
+	else:
+		hostIp = sys.argv[1]
+		userName = sys.argv[2]
+		password = sys.argv[3]
+		tenantName = sys.argv[4]
+		
+		os.environ["OS_USERNAME"] = userName
+		os.environ["OS_PASSWORD"] = password
+		os.environ["OS_TENANT_NAME"] = tenantName
+		os.environ["OS_AUTH_URL"] = "http://%s:5000/v2.0" % (hostIp)
+
+		optList = []
+		optArgList = ["--cleanall", "--keep-admin", "--verbose", "--config-file"]
+		if len(sys.argv) >= 6:
+			
+			if "--config-file" == sys.argv[len(sys.argv)-1]:
+				print "USE: --config-file <complete file path>"
+				exit()
+			for i in range(5, len(sys.argv)):
+				
+				if sys.argv[i] == "--config-file" and len(sys.argv) > i+1 and sys.argv[i+1] not in optArgList:
+					os.environ["CONF_FILE"] = sys.argv[i+1]
+					optList.append(sys.argv[i])
+					continue
+				elif sys.argv[i] == "--config-file" and len(sys.argv) > i+1 and sys.argv[i+1] in optArgList:
+					print "USE: --config-file <complete file path>"
+					exit() 
+	
+				if sys.argv[i] in optArgList or sys.argv[i] == os.getenv("CONF_FILE"):
+					optList.append(sys.argv[i])
+				else:
+					print "Unknown optional argument '%s'" % (sys.argv[i])
+					print "Choose from :", optArgList
+					exit()
+
+			if "--keep-admin" in optList and "--cleanall" not in optList:
+				print "'--keep-admin' must be used with --cleanall option"
+				exit()
+			
+			if "--keep-admin" in optList:
+				os.environ["KEEP_ADMIN"] = "yes"
+			elif "--cleanall" in optList and "--keep-admin" not in optList:
+				os.environ["KEEP_ADMIN"] = "no"
+			else:
+				os.environ["KEEP_ADMIN"] = "yes"
+
+			if "--cleanall" in optList:
+				os.environ["CLEAN_ALL"] = "yes"
+			else:
+				os.environ["CLEAN_ALL"] = "no"
+			if "--verbose" in optList:
+				os.environ["VERBOSE"] = "yes"
+			else:
+				os.environ["VERBOSE"] = "no"
+		
+		os.environ["LOG_FILE"] = os.getenv('HOME')+"/cleanup.log"		
+		if "--config-file" not in optList:
+			os.environ["CONF_FILE"] = "clean_not.conf"
+		cleanUp(hostIp, "http", userName, password, tenantName)	
+
+if __name__ == '__main__':
+	
+	main()
+
