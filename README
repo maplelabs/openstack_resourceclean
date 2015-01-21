@@ -64,15 +64,15 @@ Before running this script below things need to be installed
 2. ospurge
 
 
-Steps to install configparser :
-===============================
+STEP TO INSTALL configparser AND ospurge :
+=========================================
 
   $sudo pip install configparser
   $sudo pip install ospurge
   
 
-Configuration:
-=============
+CONFIGURATION:
+==============
 One configuration file need to be provided with --config-file option . If any configuration file is not not provided then it will search in present working directory 
 
 with file named 'clean_not.conf'
