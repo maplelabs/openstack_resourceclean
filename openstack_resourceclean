@@ -147,6 +147,7 @@ def cleanUp(hostIp=None, protocol=None, userName=None, password=None, tenantName
 	cleanupObject.getConfigData()
 	authToken = cleanupObject.getAuthToken(userName, password, tenantName, authPort)
 	cleanupObject.getResource("tenants", authToken, keystonePort)
+        cleanupObject.writeLog('Cleaning....', sys.stdout)
 	cleanupObject.logFileObj.close()
 	for i in range(0, len(cleanupObject.deleteResourceList)):
 		if cleanupObject.deleteResourceList[i] != "admin" and cleanupObject.deleteResourceList[i] not in permTenantList:
