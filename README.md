@@ -1,5 +1,5 @@
-DESCRIPTION:
-============
+Description:
+------------
 'openstack_resourceclean' is a standalone, client-side, Python script that aims at deleting all resources (taking into account their interdependencies) with Option of 
 
 keeping resources of specified Tenants. resourceclean ensures in a quick and automated way that no resource is left behind for the deleted tenant.
@@ -30,14 +30,14 @@ keeping resources of specified Tenants. resourceclean ensures in a quick and aut
   CeilometerAlarms
 
 Advantage:
-==========
+---------
 While using Openstack, users face situation where many Openstack resources (instances, networks, users, tenants, images etc) present which are not in use and should be 
 
 cleaned up, also sometime testing tools like Tempest, CTS, creates many resources which are not cleaned up, there this tool can be useful.
 'openstack_resourceclean' script cleans Openstack related resources created by any testing tool. (Example tempest)
 
 Options:
-========
+--------
 1. --cleanall: Clean all the resources for all the tenants except service tenant which are used in Opensatck services, keystone entry for admin tenant will not be      
 
    deleted
@@ -55,8 +55,8 @@ Options:
 'openstack_resourceclean' writes logs to cleanup.log in home directory of the user
 
 
-PREREQUISITES:
-==============
+prerequisite:
+--------------
 
 Before running this script below things need to be installed
 
@@ -64,23 +64,23 @@ Before running this script below things need to be installed
 2. ospurge
 
 
-STEP TO INSTALL configparser AND ospurge :
-=========================================
+Steps to install 'configparser' and 'ospurge':
+----------------------------------------------
 
   $sudo pip install configparser
   $sudo pip install ospurge
   
 
-CONFIGURATION:
-==============
+Configuration:
+--------------
 One configuration file need to be provided with --config-file option . If any configuration file is not not provided then it will search in present working directory 
 
 with file named 'clean_not.conf'
 
 Configuration file will contain all the tenant and user names which should not be deleted.
 
-USAGE:
-======
+Usage:
+------
 
 
  i) clone the code from github
@@ -129,19 +129,15 @@ Example:
    
     $./openstack_resourceclean 10.11.0.134 admin password admin_tenant --verbose
 
-SAMPLE CONFIGURATION FILE:
-==========================
+Sample configuration file:
+--------------------------
 [tenant]
 
-# List of tenants which should NOT be deleted.
-tenantList = demo_tenant
+tenantList = List of tenants which should NOT be deleted (e.g. admin, demo etc)
 
-
-# User Resources 
 [user]
 
-# List of users whcih should NOT be deleted
-userList = demo_user, demo_user2
+userList = List of users whcih should NOT be deleted (e.g demo1, demo2 etc)
 
 
 
